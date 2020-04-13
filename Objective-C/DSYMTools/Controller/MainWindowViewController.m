@@ -101,7 +101,7 @@
             archiveInfo.archiveFileName = fileName;
             archiveInfo.archiveFileType = ArchiveFileTypeXCARCHIVE;
             [self formatArchiveInfo:archiveInfo];
-        }else if([fileName hasSuffix:@".app.dSYM"]){
+        }else if([fileName hasSuffix:@".dSYM"]){
             archiveInfo.dSYMFilePath = filePath;
             archiveInfo.dSYMFileName = fileName;
             archiveInfo.archiveFileType = ArchiveFileTypeDSYM;
@@ -355,11 +355,26 @@
     NSInteger tag = radioButton.tag;
     _selectedUUIDInfo = _selectedArchiveInfo.uuidInfos[tag - 1];
     _selectedUUIDLabel.stringValue = _selectedUUIDInfo.uuid;
-    _defaultSlideAddressLabel.stringValue = _selectedUUIDInfo.defaultSlideAddress;
 }
 
 - (void)doubleActionMethod{
     NSLog(@"double action");
+}
+
+- (BOOL)checkInputWithString:(NSString *)string intValue:(NSInteger *)intValue
+{
+    if ([string isEqualToString:@""]) {
+        *intValue = 0;
+        return NO;
+    }
+    
+    if ([string hasPrefix:@"0x"] || [string hasPrefix:@"0X"]) {
+        NSString *tenString = [self sixtyToTen:string];
+        *intValue = [tenString integerValue];
+    } else {
+        *intValue = [string integerValue];
+    }
+    return YES;
 }
 
 - (IBAction)analyse:(id)sender {
@@ -371,35 +386,55 @@
         return;
     }
     
-    if([self.defaultSlideAddressLabel.stringValue isEqualToString:@""]){
+    BOOL hasDefaultSlideAddress = NO;
+    BOOL hasErrorMemoryAddress = NO;
+    BOOL hasErrorAddress = NO;
+    
+    NSInteger defaultSlideAddressInt = 0;
+    NSInteger errorMemoryAddressInt = 0;
+    NSInteger errorAddressInt = 0;
+    
+    hasDefaultSlideAddress = [self checkInputWithString:self.defaultSlideAddressLabel.stringValue intValue:&defaultSlideAddressInt];
+    hasErrorMemoryAddress = [self checkInputWithString:self.errorMemoryAddressLabel.stringValue intValue:&errorMemoryAddressInt];
+    hasErrorAddress = [self checkInputWithString:self.errorTextField.stringValue intValue:&errorAddressInt];
+    
+    if ((hasDefaultSlideAddress == NO && hasErrorMemoryAddress == NO) ||
+        (hasDefaultSlideAddress == NO && hasErrorAddress == NO) ||
+        (hasErrorMemoryAddress == NO && hasErrorAddress == NO)) {
         return;
     }
     
-    if([self.errorMemoryAddressLabel.stringValue isEqualToString:@""]){
-        return;
-    }
-    NSString *result = @"";
-    NSString *slidValueStr = self.defaultSlideAddressLabel.stringValue;
-    if (slidValueStr.length > 0) {
-        if (![slidValueStr hasPrefix:@"0x"] && ![slidValueStr hasPrefix:@"0X"]) {
-            NSString *memoryAddressToTen = [self sixtyToTen:self.errorMemoryAddressLabel.stringValue];
-            NSInteger memoryAddressTenInt = memoryAddressToTen.integerValue;
-            
-            NSInteger slideAddressTenInt = memoryAddressTenInt - slidValueStr.integerValue;
-            NSString *slideAddressSixTyStr = [self tenToSixTy:slideAddressTenInt];
-            
-            NSString *commandString = [NSString stringWithFormat:@"xcrun atos -arch %@ -o \"%@\" -l %@ %@", self.selectedUUIDInfo.arch, self.selectedUUIDInfo.executableFilePath, slideAddressSixTyStr, self.errorMemoryAddressLabel.stringValue];
-            result = [self runCommand:commandString];
-            
-        }else{
-            NSString *memoryAddressToTen = [self sixtyToTen:self.errorMemoryAddressLabel.stringValue];
-            NSInteger memoryAddressTenInt = memoryAddressToTen.integerValue + self.errorTextField.stringValue.integerValue;
-            NSString *slideAddressSixTyStr = [self tenToSixTy:memoryAddressTenInt];
-            
-            NSString *commandString = [NSString stringWithFormat:@"xcrun atos -arch %@ -o \"%@\" -l %@ %@", self.selectedUUIDInfo.arch, self.selectedUUIDInfo.executableFilePath, self.defaultSlideAddressLabel.stringValue, slideAddressSixTyStr];
-            result = [self runCommand:commandString];
+    if (hasDefaultSlideAddress &&
+        hasErrorMemoryAddress &&
+        hasErrorAddress) {
+        if (defaultSlideAddressInt + errorAddressInt != errorMemoryAddressInt) {
+            [self.errorMessageView setString:@"输入的条件需满足：SlideAddress + 偏移量 == 错误信息内存地址"];
+            return;
         }
+    } else if (hasDefaultSlideAddress &&
+               hasErrorMemoryAddress &&
+               hasErrorAddress == NO) {
+        errorAddressInt = errorMemoryAddressInt - defaultSlideAddressInt;
+    } else if (hasDefaultSlideAddress &&
+               hasErrorMemoryAddress == NO &&
+               hasErrorAddress) {
+        errorMemoryAddressInt = defaultSlideAddressInt + errorAddressInt;
+    } else if (hasDefaultSlideAddress == NO &&
+               hasErrorMemoryAddress &&
+               hasErrorAddress) {
+        defaultSlideAddressInt = errorMemoryAddressInt - errorAddressInt;
     }
+    
+    NSString *slideAddressSixty = [self tenToSixTy:defaultSlideAddressInt];
+    NSString *errorMemoryAddressSixty = [self tenToSixTy:errorMemoryAddressInt];
+    
+    self.defaultSlideAddressLabel.stringValue = slideAddressSixty;
+    self.errorMemoryAddressLabel.stringValue = errorMemoryAddressSixty;
+    self.errorTextField.stringValue = [NSString stringWithFormat:@"%ld", errorAddressInt];
+        
+    NSString *commandString = [NSString stringWithFormat:@"xcrun atos -arch %@ -o \"%@\" -l %@ %@", self.selectedUUIDInfo.arch, self.selectedUUIDInfo.executableFilePath, slideAddressSixty, errorMemoryAddressSixty];
+    
+    NSString *result = [self runCommand:commandString];
     [self.errorMessageView setString:result];
 }
 
@@ -438,7 +473,7 @@
         }
         
     }
-    return str;
+    return [NSString stringWithFormat:@"0x%@", str];
 }
 //十六进制->十进制
 -(NSString *)sixtyToTen:(NSString *)sixTyStr{
